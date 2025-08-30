@@ -27,6 +27,7 @@ video_encoder = None
 video_quality = None
 live_mirror = False
 live_resizable = True
+live_recording = False
 max_memory = None
 execution_providers: List[str] = []
 execution_threads = None
@@ -41,3 +42,9 @@ show_mouth_mask_box = False
 mask_feather_ratio = 8
 mask_down_size = 0.50
 mask_size = 1
+
+# Video recording in live mode
+is_recording = False
+recorded_frames = []
+recording_start_time = None
+recording_output_path = None

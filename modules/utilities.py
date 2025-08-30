@@ -9,6 +9,7 @@ import urllib
 from pathlib import Path
 from typing import List, Any
 from tqdm import tqdm
+import cv2
 
 import modules.globals
 
@@ -207,3 +208,37 @@ def conditional_download(download_directory_path: str, urls: List[str]) -> None:
 
 def resolve_relative_path(path: str) -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), path))
+
+
+def create_video_from_frames(frames: list, output_path: str, fps: float = 30.0) -> bool:
+    """Create a video from a list of recorded frames"""
+    if not frames:
+        return False
+    
+    try:
+        # Create output directory if it doesn't exist
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+        
+        # Get video dimensions from first frame
+        height, width = frames[0].shape[:2]
+        
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        
+        if not out.isOpened():
+            print(f"Failed to open video writer for {output_path}")
+            return False
+        
+        # Write frames
+        for frame in frames:
+            out.write(frame)
+        
+        out.release()
+        return True
+        
+    except Exception as e:
+        print(f"Error creating video from frames: {str(e)}")
+        return False
