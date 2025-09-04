@@ -7,6 +7,8 @@ from cv2_enumerate_cameras import enumerate_cameras  # Add this import
 from PIL import Image, ImageOps
 import time
 import json
+import subprocess
+import shutil
 import modules.globals
 import modules.metadata
 from modules.face_analyser import (
@@ -77,6 +79,93 @@ source_label_dict_live = {}
 target_label_dict_live = {}
 
 img_ft, vid_ft = modules.globals.file_types
+
+
+def better_file_dialog(title: str, initial_dir: str = None, file_types=None, save_mode: bool = False, default_filename: str = None) -> str:
+    """
+    Provides a better file dialog experience on Linux using native dialogs when available.
+    Falls back to tkinter dialog if native options are not available.
+    """
+    try:
+        if platform.system() == "Linux":
+            # Try to use zenity first (most common native dialog)
+            if shutil.which("zenity"):
+                cmd = ["zenity", "--file-selection"]
+                if title:
+                    cmd.extend(["--title", title])
+                if save_mode:
+                    cmd.append("--save")
+                    if default_filename:
+                        cmd.extend(["--filename", default_filename])
+                if initial_dir:
+                    cmd.extend(["--filename", initial_dir + "/"])
+                
+                # Add file filters
+                if file_types:
+                    for name, patterns in file_types:
+                        filter_str = f"{name} ("
+                        filter_str += " ".join(patterns)
+                        filter_str += ")"
+                        cmd.extend(["--file-filter", filter_str])
+                
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0 and result.stdout.strip():
+                        return result.stdout.strip()
+                except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                    pass
+            
+            # Try kdialog if zenity is not available
+            elif shutil.which("kdialog"):
+                cmd = ["kdialog"]
+                if save_mode:
+                    cmd.append("--getsavefilename")
+                    if initial_dir and default_filename:
+                        cmd.append(f"{initial_dir}/{default_filename}")
+                    elif initial_dir:
+                        cmd.append(initial_dir)
+                    else:
+                        cmd.append(default_filename or "")
+                else:
+                    cmd.append("--getopenfilename")
+                    cmd.append(initial_dir or os.path.expanduser("~"))
+                
+                if title:
+                    cmd.extend(["--title", title])
+                
+                # Add file filters for kdialog
+                if file_types:
+                    filter_parts = []
+                    for name, patterns in file_types:
+                        pattern_str = " ".join(patterns)
+                        filter_parts.append(f"{pattern_str}|{name}")
+                    if filter_parts:
+                        cmd.append("|".join(filter_parts))
+                
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0 and result.stdout.strip():
+                        return result.stdout.strip()
+                except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                    pass
+    except Exception:
+        pass
+    
+    # Fallback to tkinter file dialog
+    if save_mode:
+        return ctk.filedialog.asksaveasfilename(
+            title=title,
+            initialdir=initial_dir,
+            filetypes=file_types or [],
+            defaultextension=".png" if default_filename and default_filename.endswith('.png') else ".mp4",
+            initialfile=default_filename or ""
+        )
+    else:
+        return ctk.filedialog.askopenfilename(
+            title=title,
+            initialdir=initial_dir,
+            filetypes=file_types or []
+        )
 
 
 def init(start: Callable[[], None], destroy: Callable[[], None], lang: str) -> ctk.CTk:
@@ -558,10 +647,10 @@ def update_popup_source(
 ) -> list:
     global source_label_dict
 
-    source_path = ctk.filedialog.askopenfilename(
+    source_path = better_file_dialog(
         title=_("select a source image"),
-        initialdir=RECENT_DIRECTORY_SOURCE,
-        filetypes=[img_ft],
+        initial_dir=RECENT_DIRECTORY_SOURCE,
+        file_types=[img_ft],
     )
 
     if "source" in map[button_num]:
@@ -655,10 +744,10 @@ def select_source_path() -> None:
     global RECENT_DIRECTORY_SOURCE, img_ft, vid_ft
 
     PREVIEW.withdraw()
-    source_path = ctk.filedialog.askopenfilename(
+    source_path = better_file_dialog(
         title=_("select a source image"),
-        initialdir=RECENT_DIRECTORY_SOURCE,
-        filetypes=[img_ft],
+        initial_dir=RECENT_DIRECTORY_SOURCE,
+        file_types=[img_ft],
     )
     if is_image(source_path):
         modules.globals.source_path = source_path
@@ -698,10 +787,10 @@ def select_target_path() -> None:
     global RECENT_DIRECTORY_TARGET, img_ft, vid_ft
 
     PREVIEW.withdraw()
-    target_path = ctk.filedialog.askopenfilename(
+    target_path = better_file_dialog(
         title=_("select a target image or video"),
-        initialdir=RECENT_DIRECTORY_TARGET,
-        filetypes=[img_ft, vid_ft],
+        initial_dir=RECENT_DIRECTORY_TARGET,
+        file_types=[img_ft, vid_ft],
     )
     if is_image(target_path):
         modules.globals.target_path = target_path
@@ -722,20 +811,20 @@ def select_output_path(start: Callable[[], None]) -> None:
     global RECENT_DIRECTORY_OUTPUT, img_ft, vid_ft
 
     if is_image(modules.globals.target_path):
-        output_path = ctk.filedialog.asksaveasfilename(
+        output_path = better_file_dialog(
             title=_("save image output file"),
-            filetypes=[img_ft],
-            defaultextension=".png",
-            initialfile="output.png",
-            initialdir=RECENT_DIRECTORY_OUTPUT,
+            initial_dir=RECENT_DIRECTORY_OUTPUT,
+            file_types=[img_ft],
+            save_mode=True,
+            default_filename="output.png",
         )
     elif is_video(modules.globals.target_path):
-        output_path = ctk.filedialog.asksaveasfilename(
+        output_path = better_file_dialog(
             title=_("save video output file"),
-            filetypes=[vid_ft],
-            defaultextension=".mp4",
-            initialfile="output.mp4",
-            initialdir=RECENT_DIRECTORY_OUTPUT,
+            initial_dir=RECENT_DIRECTORY_OUTPUT,
+            file_types=[vid_ft],
+            save_mode=True,
+            default_filename="output.mp4",
         )
     else:
         output_path = None
@@ -1353,10 +1442,10 @@ def update_webcam_source(
 ) -> list:
     global source_label_dict_live
 
-    source_path = ctk.filedialog.askopenfilename(
+    source_path = better_file_dialog(
         title=_("select a source image"),
-        initialdir=RECENT_DIRECTORY_SOURCE,
-        filetypes=[img_ft],
+        initial_dir=RECENT_DIRECTORY_SOURCE,
+        file_types=[img_ft],
     )
 
     if "source" in map[button_num]:
@@ -1405,10 +1494,10 @@ def update_webcam_target(
 ) -> list:
     global target_label_dict_live
 
-    target_path = ctk.filedialog.askopenfilename(
+    target_path = better_file_dialog(
         title=_("select a target image"),
-        initialdir=RECENT_DIRECTORY_SOURCE,
-        filetypes=[img_ft],
+        initial_dir=RECENT_DIRECTORY_SOURCE,
+        file_types=[img_ft],
     )
 
     if "target" in map[button_num]:
