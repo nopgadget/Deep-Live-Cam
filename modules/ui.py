@@ -363,6 +363,76 @@ def create_root(start: Callable[[], None], destroy: Callable[[], None]) -> ctk.C
         ),
     )
     live_button.place(relx=0.65, rely=0.86, relwidth=0.2, relheight=0.05)
+    
+    # --- Recording Controls ---
+    recording_button = ctk.CTkButton(
+        root,
+        text=_("Start Recording"),
+        cursor="hand2",
+        command=lambda: toggle_recording(
+            root,
+            (
+                camera_indices[camera_names.index(camera_variable.get())]
+                if camera_names and camera_names[0] != "No cameras found"
+                else None
+            ),
+        ),
+        state=(
+            "normal"
+            if camera_names and camera_names[0] != "No cameras found"
+            else "disabled"
+        ),
+    )
+    recording_button.place(relx=0.1, rely=0.92, relwidth=0.25, relheight=0.05)
+    
+    # Recording hotkey label
+    recording_hotkey_label = ctk.CTkLabel(
+        root, 
+        text="Click button to start/stop recording", 
+        justify="center",
+        font=("Arial", 9)
+    )
+    recording_hotkey_label.place(relx=0.1, rely=0.97, relwidth=0.25, relheight=0.03)
+    
+    # Store reference to recording button for updating text
+    modules.globals.recording_button = recording_button
+    
+    # Recording status label
+    recording_status_label = ctk.CTkLabel(root, text="", justify="center")
+    recording_status_label.place(relx=0.4, rely=0.92, relwidth=0.25, relheight=0.05)
+    modules.globals.recording_status_label = recording_status_label
+    
+    # Recording progress bar
+    recording_progress = ctk.CTkProgressBar(root)
+    recording_progress.place(relx=0.4, rely=0.95, relwidth=0.25, relheight=0.02)
+    recording_progress.set(0)
+    recording_progress.place_forget()
+    modules.globals.recording_progress = recording_progress
+    
+    # Recording directory label
+    recording_dir = os.path.join(os.path.expanduser("~"), "Desktop", "DeepLiveCam_Recordings")
+    recording_dir_label = ctk.CTkLabel(
+        root, 
+        text=f"Recordings: {os.path.basename(recording_dir)}", 
+        justify="center",
+        font=("Arial", 10)
+    )
+    recording_dir_label.place(relx=0.1, rely=0.97, relwidth=0.8, relheight=0.03)
+    
+    # Recording settings label
+    encoder = getattr(modules.globals, 'video_encoder', 'mp4v')
+    quality = getattr(modules.globals, 'video_quality', 'default')
+    recording_settings_label = ctk.CTkLabel(
+        root, 
+        text=f"Format: MP4, Encoder: {encoder}, Quality: {quality}", 
+        justify="center",
+        font=("Arial", 9)
+    )
+    recording_settings_label.place(relx=0.7, rely=0.92, relwidth=0.25, relheight=0.05)
+    modules.globals.recording_settings_label = recording_settings_label
+    
+    # --- End Recording Controls ---
+    
     # --- End Camera Selection ---
 
     status_label = ctk.CTkLabel(root, text=None, justify="center")
@@ -797,6 +867,153 @@ def webcam_preview(root: ctk.CTk, camera_index: int):
         )
 
 
+def toggle_recording(root: ctk.CTk, camera_index: int):
+    """Toggle video recording on/off"""
+    global popup_status_label
+    
+    if modules.globals.is_recording:
+        # Stop recording
+        stop_recording()
+        if modules.globals.recording_button:
+            modules.globals.recording_button.configure(text=_("Start Recording"))
+        update_status("Recording stopped. Video saved.")
+    else:
+        # Start recording
+        if not modules.globals.webcam_preview_running:
+            update_status("Please start live preview first")
+            return
+        
+        start_recording(camera_index)
+        if modules.globals.recording_button:
+            modules.globals.recording_button.configure(text=_("Stop Recording"))
+        
+        # Show detailed recording info
+        encoder = getattr(modules.globals, 'video_encoder', 'mp4v')
+        quality = getattr(modules.globals, 'video_quality', 'default')
+        update_status(f"Recording started with {encoder} encoder, quality {quality}")
+
+def start_recording(camera_index: int):
+    """Start video recording"""
+    import datetime
+    
+    # Create output filename with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(os.path.expanduser("~"), "Desktop", "DeepLiveCam_Recordings")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    modules.globals.recording_output_path = os.path.join(
+        output_dir, f"recording_{timestamp}.mp4"
+    )
+    
+    modules.globals.is_recording = True
+    modules.globals.recorded_frames = []
+    modules.globals.recording_start_time = time.time()
+    modules.globals.recording_frame_times = []  # Track frame timestamps
+    
+    # Update status label
+    if hasattr(modules.globals, 'recording_status_label') and modules.globals.recording_status_label:
+        modules.globals.recording_status_label.configure(text="Recording...", text_color="red")
+    
+    # Show progress bar
+    if hasattr(modules.globals, 'recording_progress') and modules.globals.recording_progress:
+        modules.globals.recording_progress.place(relx=0.4, rely=0.95, relwidth=0.25, relheight=0.02)
+        modules.globals.recording_progress.set(0)
+    
+    # Show recording settings
+    encoder = getattr(modules.globals, 'video_encoder', 'mp4v')
+    quality = getattr(modules.globals, 'video_quality', 'default')
+    update_status(f"Started recording with encoder: {encoder}, quality: {quality}")
+
+def stop_recording():
+    """Stop video recording and save video"""
+    if not modules.globals.is_recording:
+        return
+    
+    modules.globals.is_recording = False
+    
+    # Update status label
+    if hasattr(modules.globals, 'recording_status_label') and modules.globals.recording_status_label:
+        modules.globals.recording_status_label.configure(text="", text_color="white")
+    
+    # Hide progress bar
+    if hasattr(modules.globals, 'recording_progress') and modules.globals.recording_progress:
+        modules.globals.recording_progress.place_forget()
+    
+    if modules.globals.recorded_frames:
+        # Calculate actual frame rate from timestamps
+        if len(modules.globals.recording_frame_times) > 1:
+            # Calculate average time between frames
+            frame_intervals = []
+            for i in range(1, len(modules.globals.recording_frame_times)):
+                interval = modules.globals.recording_frame_times[i] - modules.globals.recording_frame_times[i-1]
+                frame_intervals.append(interval)
+            
+            # Calculate average frame rate
+            avg_interval = sum(frame_intervals) / len(frame_intervals)
+            actual_fps = 1.0 / avg_interval if avg_interval > 0 else 30.0
+            actual_fps = min(actual_fps, 60.0)  # Cap at 60fps to avoid extreme values
+        else:
+            actual_fps = 30.0  # Default fallback
+        
+        # Save the recorded frames as a video with actual frame rate
+        from modules.utilities import create_video_from_frames
+        
+        success = create_video_from_frames(
+            modules.globals.recorded_frames,
+            modules.globals.recording_output_path,
+            fps=actual_fps
+        )
+        
+        if success:
+            # Get file size
+            try:
+                file_size = os.path.getsize(modules.globals.recording_output_path)
+                file_size_mb = file_size / (1024 * 1024)
+                size_info = f" ({file_size_mb:.1f} MB)"
+            except:
+                size_info = ""
+            
+            update_status(f"Video saved to: {modules.globals.recording_output_path}{size_info} at {actual_fps:.1f} fps")
+            # Also update the recording status label with the saved path
+            if hasattr(modules.globals, 'recording_status_label') and modules.globals.recording_status_label:
+                filename = os.path.basename(modules.globals.recording_output_path)
+                modules.globals.recording_status_label.configure(text=f"Saved: {filename}{size_info} at {actual_fps:.1f} fps", text_color="green")
+                # Clear the status after 3 seconds
+                clear_recording_status_after_delay(3)
+        else:
+            update_status("Failed to save video")
+            if hasattr(modules.globals, 'recording_status_label') and modules.globals.recording_status_label:
+                modules.globals.recording_status_label.configure(text="Save failed", text_color="red")
+                # Clear the status after 3 seconds
+                clear_recording_status_after_delay(3)
+        
+        # Clear recorded frames to free memory
+        modules.globals.recorded_frames.clear()
+        modules.globals.recording_frame_times.clear()
+    else:
+        update_status("No frames recorded")
+
+
+def update_recording_status_duration():
+    """Update the recording status label with current duration"""
+    if modules.globals.is_recording and hasattr(modules.globals, 'recording_status_label') and modules.globals.recording_status_label:
+        recording_duration = int(time.time() - modules.globals.recording_start_time)
+        minutes = recording_duration // 60
+        seconds = recording_duration % 60
+        frame_count = len(modules.globals.recorded_frames)
+        
+        # Estimate file size (rough calculation: ~1MB per 10 seconds at 30fps)
+        estimated_size_mb = (recording_duration / 10.0)
+        
+        modules.globals.recording_status_label.configure(
+            text=f"Recording: {minutes:02d}:{seconds:02d} ({frame_count} frames, ~{estimated_size_mb:.1f} MB)", 
+            text_color="red"
+        )
+        
+        # Update progress bar (max 30 seconds)
+        if hasattr(modules.globals, 'recording_progress') and modules.globals.recording_progress:
+            progress = min(recording_duration / 30.0, 1.0)  # Cap at 30 seconds
+            modules.globals.recording_progress.set(progress)
 
 def get_available_cameras():
     """Returns a list of available camera names and indices."""
@@ -876,6 +1093,9 @@ def create_webcam_preview(camera_index: int):
         update_status("Failed to start camera")
         return
 
+    # Set webcam preview running flag
+    modules.globals.webcam_preview_running = True
+
     preview_label.configure(width=PREVIEW_DEFAULT_WIDTH, height=PREVIEW_DEFAULT_HEIGHT)
     PREVIEW.deiconify()
 
@@ -944,6 +1164,21 @@ def create_webcam_preview(camera_index: int):
                 2,
             )
 
+        # Add recording indicator and record frames if recording is enabled
+        if modules.globals.is_recording:
+            # Record the processed frame (after face-swapping) for display
+            modules.globals.recorded_frames.append(temp_frame.copy())
+            modules.globals.recording_frame_times.append(time.time())  # Track frame timestamp
+            
+            # Limit memory usage by keeping only last 30 seconds at 30fps
+            max_frames = 30 * 30  # 30 seconds * 30 fps
+            if len(modules.globals.recorded_frames) > max_frames:
+                modules.globals.recorded_frames = modules.globals.recorded_frames[-max_frames:]
+                modules.globals.recording_frame_times = modules.globals.recording_frame_times[-max_frames:]
+            
+            # Update the recording status label with current duration
+            update_recording_status_duration()
+
         image = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(image)
         image = ImageOps.contain(
@@ -958,6 +1193,15 @@ def create_webcam_preview(camera_index: int):
 
     cap.release()
     PREVIEW.withdraw()
+    
+    # Stop recording if active when closing preview
+    if modules.globals.is_recording:
+        stop_recording()
+        if modules.globals.recording_button:
+            modules.globals.recording_button.configure(text=_("Start Recording"))
+    
+    # Clear webcam preview running flag
+    modules.globals.webcam_preview_running = False
 
 
 def create_source_target_popup_for_webcam(
@@ -1204,3 +1448,15 @@ def update_webcam_target(
         else:
             update_pop_live_status("Face could not be detected in last upload!")
         return map
+
+
+def clear_recording_status_after_delay(delay_seconds: int = 3):
+    """Clear the recording status label after a delay"""
+    def clear_status():
+        if hasattr(modules.globals, 'recording_status_label') and modules.globals.recording_status_label:
+            modules.globals.recording_status_label.configure(text="", text_color="white")
+    
+    # Schedule the status clear
+    import threading
+    timer = threading.Timer(delay_seconds, clear_status)
+    timer.start()
